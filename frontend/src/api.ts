@@ -49,11 +49,13 @@ export const api = {
     const blob = await res.blob();
     return new File([blob], name, { type: blob.type });
   },
-  extract(identity: File | null, registration: File | null): Promise<Payload> {
+  extract(identity: File | null, registration: File | null, engine?: string): Promise<Payload> {
     const form = new FormData();
     if (identity) form.append("identity_image", identity);
     if (registration) form.append("registration_image", registration);
-    return request<Payload>("/api/v1/extract?include_ocr_text=true", { method: "POST", body: form });
+    const q = new URLSearchParams({ include_ocr_text: "true" });
+    if (engine) q.set("engine", engine);
+    return request<Payload>(`/api/v1/extract?${q}`, { method: "POST", body: form });
   },
   validate: (body: unknown) =>
     request<Payload>("/api/v1/validate", {

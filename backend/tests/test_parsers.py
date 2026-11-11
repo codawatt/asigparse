@@ -163,3 +163,40 @@ def test_clean_documents_pass_except_owner_info():
     assert person.identity_document.expiry_date == "2030-01-01"
     assert val.passed, [i.code for i in val.issues if i.severity != "info"]
     assert {i.code for i in val.issues} == {"OWNER_NOT_STATED"}
+
+
+def test_partially_read_holder_name_is_flagged():
+    ide = parse_identity(make_doc(CI_ROWS))
+    rows = [r for r in TALON_ROWS if not (isinstance(r, list) and r[0][1] == "C.1.2")]
+    reg = parse_registration(make_doc(rows))
+    assert reg.holder_partial and reg.holder_name.value == "IONESCU"
+    person, vehicle, meta, ctx = build_from_extraction(ide, reg)
+    val = validate_payload(person, vehicle, meta, ctx, threshold=0.85, today=TODAY)
+    assert ("vehicle.certificate_holder.name", "HOLDER_NAME_INCOMPLETE") in codes(val)
+    assert meta["vehicle.certificate_holder.name"].review_required
+
+
+def test_company_holder_without_given_name_is_not_partial():
+    rows = list(TALON_ROWS)
+    rows[4] = [(60, "C.1.1"), (200, "SC EXEMPLU FLOTA SRL"), (1250, "P.1"), (1360, "999")]
+    rows = [r for r in rows if not (isinstance(r, list) and r[0][1] == "C.1.2")]
+    assert not parse_registration(make_doc(rows)).holder_partial
+
+
+def test_oneocr_segments_are_grouped_into_rows_even_when_tilted():
+    import math
+
+    from app.ocr.oneocr import group_into_rows
+
+    def seg(text, x, y, angle=0.0, w=200, h=30):
+        # quad corners of an axis box rotated around the origin by `angle`
+        t = math.radians(angle)
+        pts = [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
+        rot = [(px * math.cos(t) - py * math.sin(t), px * math.sin(t) + py * math.cos(t)) for px, py in pts]
+        return [(text, 0.99, tuple(c for p in rot for c in p))]
+
+    # label row with two columns, then value row; image tilted 3 degrees
+    raw = [seg("Nume/Nom/Last", 490, 280, 3), seg("Sex/Sexe/Sex", 1450, 280, 3),
+           seg("IONESCU", 490, 320, 3), seg("M", 1450, 320, 3)]
+    rows = group_into_rows(raw, 3.0)
+    assert [ln.text for ln in rows] == ["Nume/Nom/Last Sex/Sexe/Sex", "IONESCU M"]

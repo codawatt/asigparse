@@ -226,3 +226,14 @@ def test_validate_is_dry_run(client):
     assert payload["confirmed_by_operator"] is False
     assert any(i["code"] == "VIN_INVALID_LENGTH" for i in payload["validation"]["issues"])
     assert payload["field_meta"]["vehicle.vin"]["status"] == "corrected"
+
+
+def test_requested_engine_unavailable_is_500(client, monkeypatch):
+    monkeypatch.setitem(main.engines, "oneocr", FakeEngine(available=False))
+    r = client.post("/api/v1/extract?engine=oneocr", files=files())
+    assert r.status_code == 500 and err(r) == "OCR_UNAVAILABLE"
+
+
+def test_unknown_engine_name_rejected(client):
+    r = client.post("/api/v1/extract?engine=cloud", files=files())
+    assert r.status_code == 422 and err(r) == "INVALID_REQUEST"

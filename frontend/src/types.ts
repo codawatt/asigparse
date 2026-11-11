@@ -117,6 +117,7 @@ export interface Health {
     languages: string;
     missing_languages: string[];
   };
+  engines: Record<string, { available: boolean; version: string | null; reason: string | null }>;
   confidence_threshold: number;
   max_upload_mb: number;
 }

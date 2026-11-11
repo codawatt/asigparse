@@ -36,6 +36,10 @@ DESCRIPTOR = re.compile(r"^[A-Za-zĂÂÎȘŞȚŢăâîșşțţ ./]{2,40}:\s*")
 GARBLED_CODE = re.compile(r"^(?=.*[0-9.,:])[A-Z][A-Z0-9.,:]{1,5}$")
 
 PLATE_ANYWHERE = re.compile(r"(?<![A-Z0-9])((?:B\s?\d{2,3}|[A-Z]{2}\s?\d{2})\s?[A-Z]{3})(?![A-Z0-9])")
+COMPANY = re.compile(
+    r"(?<![A-Z])(S\.?C|S\.?R\.?L|S\.?A|IFN|PFA|I\.I|SCS|SNC|R\.A|COMPANIA|SOCIETATEA|BANCA|LEASING|ASOCIA[TȚ]IA"
+    r"|PRIM[AĂ]RIA|MINISTERUL)(?![A-Z])"
+)
 VIN_ANYWHERE = re.compile(r"(?<![A-Z0-9])([A-Z0-9]{17})(?![A-Z0-9])")
 
 
@@ -202,6 +206,7 @@ class RegistrationExtraction:
     seats: Extracted
     codes_found: list[str]
     notes: list[str] = field(default_factory=list)
+    holder_partial: bool = False
 
 
 def _seg(segments: dict[str, Segment], code: str, transform=lambda v: v) -> Extracted:
@@ -258,7 +263,15 @@ def parse_registration(doc: OcrDocument) -> RegistrationExtraction:
                                 note="Găsit fără eticheta E; verificați.")
                 break
 
-    holder_name = _join_name(_seg(segments, "C.1.1"), _seg(segments, "C.1.2"), "registration.C.1")
+    c11, c12 = _seg(segments, "C.1.1"), _seg(segments, "C.1.2")
+    holder_name = _join_name(c11, c12, "registration.C.1")
+    # a natural person has both C.1.1 (surname) and C.1.2 (given name); a
+    # company has only C.1.1. One part alone for a person = partially read.
+    holder_partial = bool(c12.value) and not c11.value or (
+        bool(c11.value) and not c12.value and not COMPANY.search(str(c11.value).upper())
+    )
+    if holder_partial:
+        holder_name.note = "Numele titularului pare citit parțial (lipsește C.1.1 sau C.1.2)."
     owner_last = _seg(segments, "C.2.1")
     owner_first = _seg(segments, "C.2.2")
     owner_present = bool(owner_last.value or owner_first.value)
@@ -299,6 +312,7 @@ def parse_registration(doc: OcrDocument) -> RegistrationExtraction:
         seats=as_int("S.1"),
         codes_found=sorted(segments.keys()),
         notes=notes,
+        holder_partial=holder_partial,
     )
 
 

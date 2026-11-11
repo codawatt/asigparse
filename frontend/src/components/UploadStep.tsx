@@ -126,6 +126,12 @@ export default function UploadStep({ health, identity, registration, setIdentity
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<ApiErrorBody | null>(null);
   const maxMb = health?.max_upload_mb ?? 10;
+  const [engine, setEngine] = useState<string | null>(null);
+  const selectedEngine = engine ?? health?.ocr.engine ?? null;
+  const ENGINE_LABEL: Record<string, string> = {
+    oneocr: "OneOCR (Windows Snipping Tool) — recomandat",
+    tesseract: "Tesseract (open-source, portabil)",
+  };
 
   useEffect(() => {
     api.samples().then((r) => setSamples(r.sets)).catch(() => setSamples([]));
@@ -157,7 +163,7 @@ export default function UploadStep({ health, identity, registration, setIdentity
     setError(null);
     setElapsed(0);
     try {
-      onExtracted(await api.extract(identity, registration));
+      onExtracted(await api.extract(identity, registration, selectedEngine ?? undefined));
     } catch (e) {
       setError(e instanceof ApiError ? e.body : { code: "UNKNOWN", message: String(e) });
     } finally {
@@ -165,7 +171,8 @@ export default function UploadStep({ health, identity, registration, setIdentity
     }
   };
 
-  const ocrDown = health !== null && !health.ocr.available;
+  const ocrDown =
+    health !== null && !(selectedEngine ? health.engines?.[selectedEngine]?.available : health.ocr.available);
 
   return (
     <div className="grid gap-6 lg:grid-cols-3">
@@ -181,9 +188,32 @@ export default function UploadStep({ health, identity, registration, setIdentity
               <ErrorBox
                 error={{
                   code: "OCR_UNAVAILABLE",
-                  message: "Tesseract nu este disponibil pe server. Instalați-l conform README și reporniți backend-ul.",
+                  message: "Motorul OCR selectat nu este disponibil pe server. Vezi README (OneOCR: scripts/setup_oneocr.ps1; Tesseract: instalare + ron).",
                 }}
               />
+            )}
+            {health?.engines && (
+              <div className="flex flex-wrap items-center gap-3 rounded-lg bg-slate-50 px-3 py-2 text-xs">
+                <label htmlFor="engine" className="font-medium text-slate-700">
+                  Motor OCR
+                </label>
+                <select
+                  id="engine"
+                  className="rounded-md border border-slate-300 bg-white px-2 py-1"
+                  value={selectedEngine ?? ""}
+                  onChange={(e) => setEngine(e.target.value)}
+                >
+                  {Object.entries(health.engines).map(([name, info]) => (
+                    <option key={name} value={name} disabled={!info.available}>
+                      {(ENGINE_LABEL[name] ?? name) + (info.available ? "" : " — indisponibil")}
+                    </option>
+                  ))}
+                </select>
+                {selectedEngine && !health.engines[selectedEngine]?.available && (
+                  <span className="text-rose-600">{health.engines[selectedEngine]?.reason}</span>
+                )}
+                <span className="text-slate-400">Ambele rulează local; comparație în docs/OCR_BENCHMARK.md.</span>
+              </div>
             )}
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-xs text-slate-500">
@@ -201,7 +231,7 @@ export default function UploadStep({ health, identity, registration, setIdentity
             </div>
             {busy && (
               <p className="text-xs text-slate-500">
-                Preprocesare → OCR local (Tesseract, ron+eng) → mapare câmpuri → validări. Durează de obicei 2–5 s / document.
+                OCR local ({selectedEngine === "oneocr" ? "OneOCR, ~0,2 s/document" : "Tesseract ron+eng, ~2 s/document"}) → mapare câmpuri → validări.
               </p>
             )}
           </div>

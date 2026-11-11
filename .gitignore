@@ -17,3 +17,6 @@ uploads/
 
 # local Claude preview config
 .claude/
+
+# Microsoft OneOCR binaries (copied locally from Snipping Tool; not redistributable)
+backend/vendor/

@@ -15,6 +15,7 @@ log = logging.getLogger("asigparse.ocr")
 
 class TesseractEngine:
     name = "tesseract"
+    preprocessing = "full"
 
     def __init__(self, cmd: str | None, languages: str = "ron+eng", psm: int = 6):
         self.cmd = cmd
@@ -35,6 +36,12 @@ class TesseractEngine:
             except Exception:  # pragma: no cover - depends on host
                 self._available = False
         return self._available
+
+    def unavailable_reason(self) -> str | None:
+        if not self.is_available():
+            return "Tesseract nu este instalat sau nu poate fi executat."
+        missing = self.missing_languages()
+        return f"Lipsesc datele de limbă Tesseract: {', '.join(missing)}." if missing else None
 
     def version(self) -> str | None:
         try:

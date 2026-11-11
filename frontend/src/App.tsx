@@ -71,7 +71,11 @@ export default function App() {
                 className={`rounded-full px-2 py-1 ${health.ocr.available ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-700"}`}
                 title={health.ocr.missing_languages.length ? `Limbi lipsă: ${health.ocr.missing_languages.join(", ")}` : undefined}
               >
-                {health.ocr.available ? `Tesseract ${health.ocr.version ?? ""} · ${health.ocr.languages}` : "OCR indisponibil"}
+                {health.ocr.available
+                  ? health.ocr.engine === "oneocr"
+                    ? "OCR implicit: OneOCR"
+                    : `OCR implicit: Tesseract ${health.ocr.version ?? ""} · ${health.ocr.languages}`
+                  : "OCR indisponibil"}
               </span>
             ) : (
               <span className="text-slate-400">verificare API…</span>

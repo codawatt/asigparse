@@ -7,6 +7,8 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .ocr.oneocr import default_oneocr_dir
+
 
 def _find_tesseract() -> str | None:
     explicit = os.getenv("ASIGPARSE_TESSERACT_CMD")
@@ -45,6 +47,9 @@ class Settings:
         if o.strip()
     )
     samples_dir: Path = Path(__file__).resolve().parent.parent / "samples"
+    # auto | oneocr | tesseract
+    ocr_engine: str = os.getenv("ASIGPARSE_OCR_ENGINE", "auto").strip().lower()
+    oneocr_dir: Path | None = field(default_factory=default_oneocr_dir)
 
 
 settings = Settings()

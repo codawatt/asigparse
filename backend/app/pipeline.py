@@ -63,6 +63,7 @@ class Context:
     identity_type: str | None = None
     address_label_present: bool = True
     owner_present: bool = False
+    holder_partial: bool = False
     mrz_birth_date: date | None = None
     mrz_sex: str | None = None
     mrz_last_name: str | None = None
@@ -196,6 +197,7 @@ def build_from_extraction(
         for path, ex in pairs.items():
             meta[path] = _meta(ex)
         ctx.owner_present = reg.owner_present
+        ctx.holder_partial = reg.holder_partial
         ctx.fuel_raw = reg.fuel_raw
     else:
         vehicle = Vehicle()
@@ -337,6 +339,14 @@ def validate_payload(
     # -- cross-document ----------------------------------------------------
     holder_name = vehicle.certificate_holder.name if vehicle.certificate_holder else None
     person_name = " ".join(x for x in (person.last_name, person.first_name) if x) or None
+    holder_tokens = set(v.strip_diacritics(holder_name or "").upper().replace("-", " ").split())
+    person_tokens = set(v.strip_diacritics(person_name or "").upper().replace("-", " ").split())
+    if ctx.holder_partial and not ctx.confirmed:
+        add("vehicle.certificate_holder.name", "HOLDER_NAME_INCOMPLETE", "warning",
+            "Numele titularului pare citit parțial (lipsește C.1.1 sau C.1.2). Verificați pe certificat.")
+    elif holder_tokens and person_tokens and holder_tokens < person_tokens:
+        add("vehicle.certificate_holder.name", "HOLDER_NAME_INCOMPLETE", "warning",
+            "Titularul conține doar o parte din numele persoanei din CI; posibil citit parțial. Verificați.")
     if holder_name and person_name and not v.names_equivalent(holder_name, person_name):
         add("vehicle.certificate_holder.name", "HOLDER_DIFFERS_FROM_PERSON", "info",
             "Titularul certificatului (C.1) diferă de persoana din actul de identitate. Stabiliți cine este "

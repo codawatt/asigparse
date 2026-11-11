@@ -112,6 +112,15 @@ def preprocess(img: Image.Image) -> Image.Image:
     return gray
 
 
+def upscale_small(img: Image.Image, min_width: int = 900, target: int = TARGET_MIN_WIDTH) -> Image.Image:
+    """Light preprocessing for neural OCR engines: keep colours/contrast, only
+    enlarge images whose text would otherwise be a few pixels high."""
+    if img.width >= min_width:
+        return img
+    scale = target / img.width
+    return img.convert("RGB").resize((int(img.width * scale), int(img.height * scale)), Image.Resampling.LANCZOS)
+
+
 @dataclass
 class QualityReport:
     width: int

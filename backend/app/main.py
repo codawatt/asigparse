@@ -13,7 +13,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .config import settings
 from .ocr.base import OcrUnavailableError
-from .ocr.tesseract import TesseractEngine
+from .ocr.registry import build_engines, pick_default
 from .samples import SAMPLE_SETS, sample_path
 from .schemas import ConfirmRequest, ConfirmResponse, ErrorResponse, ExtractionPayload
 from .service import ProcessingError, confirm, extract
@@ -59,7 +59,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-engine = TesseractEngine(settings.tesseract_cmd, settings.ocr_languages)
+engines = build_engines(settings)
+engine = pick_default(engines, settings.ocr_engine)  # default engine (tests may replace it)
 store = ProcessingStore(settings.processing_ttl_seconds)
 
 
@@ -105,8 +106,16 @@ def health():
             "engine": engine.name,
             "available": available,
             "version": engine.version() if available else None,
-            "languages": settings.ocr_languages,
+            "languages": settings.ocr_languages if engine.name == "tesseract" else "multilingual",
             "missing_languages": engine.missing_languages(),
+        },
+        "engines": {
+            name: {
+                "available": e.is_available(),
+                "version": e.version() if e.is_available() else None,
+                "reason": getattr(e, "unavailable_reason", lambda: None)(),
+            }
+            for name, e in engines.items()
         },
         "confidence_threshold": settings.confidence_threshold,
         "max_upload_mb": settings.max_upload_bytes // (1024 * 1024),
@@ -139,6 +148,10 @@ async def extract_endpoint(
     identity_image: UploadFile | None = File(default=None),
     registration_image: UploadFile | None = File(default=None),
     include_ocr_text: bool = Query(default=False, description="Returnează textul OCR brut (doar în răspuns, nelogat)."),
+    engine_name: str | None = Query(
+        default=None, alias="engine", pattern="^(oneocr|tesseract)$",
+        description="Forțează un motor OCR (implicit: cel configurat).",
+    ),
 ):
     files: dict[str, bytes] = {}
     if identity_image is not None and identity_image.filename:
@@ -149,10 +162,12 @@ async def extract_endpoint(
         raise ProcessingError(
             "NO_FILES", "Încărcați cel puțin un document (identity_image și/sau registration_image).", 400
         )
-    if not engine.is_available():
-        raise OcrUnavailableError("Tesseract nu este instalat sau nu poate fi executat.")
+    selected = engines[engine_name] if engine_name else engine
+    if not selected.is_available():
+        reason = getattr(selected, "unavailable_reason", lambda: None)()
+        raise OcrUnavailableError(reason or f"Motorul OCR {selected.name} nu este disponibil.")
     return await run_in_threadpool(
-        extract, files, engine=engine, settings=settings, store=store, include_ocr_text=include_ocr_text
+        extract, files, engine=selected, settings=settings, store=store, include_ocr_text=include_ocr_text
     )
 
 

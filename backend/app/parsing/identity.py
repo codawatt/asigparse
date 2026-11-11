@@ -102,11 +102,13 @@ def _below(lines: list[OcrLine], i: int, ch: OcrLine, max_lines: int) -> list[Oc
 
 def _name_after_label(lines: list[OcrLine], label: re.Pattern[str], exclude: re.Pattern[str] | None, source: str) -> Extracted | None:
     for i, ch in _label_chunks(lines, label, exclude):
-        same = _strip_label_words(ch.text)
+        # Trilingual labels ("Nume/Nom/Last name") always contain '/', names
+        # never do: a slashed chunk is a (possibly misread) label, not a value.
+        same = _strip_label_words(ch.text) if "/" not in ch.text else ""
         if same and re.fullmatch(r"[A-Za-zĂÂÎȘŞȚŢăâîșşțţ \-']{2,}", same) and not LBL_STOP.search(fold(same)):
             return Extracted(normalize_name(same), substring_confidence(ch, same), source)
         for c in _below(lines, i, ch, 1):
-            if _is_value_text(c.text):
+            if _is_value_text(c.text) and "/" not in c.text:
                 value = re.sub(r"[^A-Za-zĂÂÎȘŞȚŢăâîșşțţ \-']", "", c.text).strip()
                 if len(value) >= 2:
                     return Extracted(normalize_name(value), line_conf(c), source)

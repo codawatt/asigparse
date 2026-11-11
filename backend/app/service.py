@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 from .config import Settings
 from .ocr.base import OcrDocument, OcrEngine
-from .ocr.preprocess import FileRejectedError, assess_quality, decode_upload, preprocess
+from .ocr.preprocess import FileRejectedError, assess_quality, decode_upload, preprocess, upscale_small
 from .parsing.identity import IdentityExtraction, identity_score, parse_identity
 from .parsing.registration import RegistrationExtraction, parse_registration, registration_score
 from .pipeline import (
@@ -75,7 +75,9 @@ def run_ocr(slot: str, data: bytes, engine: OcrEngine, settings: Settings) -> Oc
         q = assess_quality(page)
         qualities.append(QualityInfo(width=q.width, height=q.height, blur_score=q.blur_score, brightness=q.brightness))
         warnings.extend(q.warnings)
-        lines, rotation = engine.recognize(preprocess(page), page=page_no)
+        mode = getattr(engine, "preprocessing", "full")
+        prepared = preprocess(page) if mode == "full" else upscale_small(page) if mode == "upscale_small" else page
+        lines, rotation = engine.recognize(prepared, page=page_no)
         doc.lines.extend(lines)
         doc.rotation_applied.append(rotation)
 
