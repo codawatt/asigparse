@@ -1,0 +1,78 @@
+{
+  "synthetic": true,
+  "notice": "Toate datele sunt fictive, generate de scripts/generate_samples.py.",
+  "sets": [
+    {
+      "id": "standard",
+      "title": "Caz standard: CI 1997 + talon (imagini clare)",
+      "description": "Titular = persoana din CI; C.2 absent (proprietarul nu este presupus).",
+      "identity": "ci_ionescu.png",
+      "registration": "talon_logan.png",
+      "expected": {
+        "person.last_name": "IONESCU",
+        "person.first_name": "ALEX",
+        "person.national_id": "1800101400016",
+        "person.identity_document.series": "XY",
+        "person.identity_document.number": "000001",
+        "person.identity_document.expiry_date": "2030-01-01",
+        "vehicle.registration_number": "B99XYZ",
+        "vehicle.vin": "UU1TEST9X00000001",
+        "vehicle.make": "DACIA",
+        "vehicle.model": "LOGAN",
+        "vehicle.engine_cc": 999,
+        "vehicle.power_kw": 67,
+        "vehicle.fuel": "PETROL",
+        "vehicle.first_registration": "2020-03-10",
+        "vehicle.certificate_holder.name": "IONESCU ALEX",
+        "vehicle.legal_owner": null
+      }
+    },
+    {
+      "id": "photo_leasing",
+      "title": "Fotografie înclinată + talon PDF cu proprietar leasing",
+      "description": "CI fotografiată (blur, rotire, zgomot); talon PDF cu alt layout; C.2 ≠ C.1.",
+      "identity": "ci_popescu_photo.jpg",
+      "registration": "talon_golf_leasing.pdf",
+      "expected": {
+        "person.last_name": "POPESCU",
+        "person.first_name": "MARIA-ELENA",
+        "person.national_id": "2850315120013",
+        "person.identity_document.series": "ZZ",
+        "person.identity_document.number": "654321",
+        "vehicle.registration_number": "CJ99TST",
+        "vehicle.vin": "WVWZZZTEST0000002",
+        "vehicle.make": "VOLKSWAGEN",
+        "vehicle.model": "GOLF",
+        "vehicle.engine_cc": 1598,
+        "vehicle.power_kw": 85,
+        "vehicle.fuel": "DIESEL",
+        "vehicle.first_registration": "2019-06-15",
+        "vehicle.certificate_holder.name": "POPESCU MARIA-ELENA",
+        "vehicle.legal_owner.name": "SC EXEMPLU LEASING IFN SA"
+      }
+    },
+    {
+      "id": "cei_issues",
+      "title": "CEI fără domiciliu + firmă titulară + vehicul electric",
+      "description": "CNP cu cifră de control greșită și act expirat (intenționat); domiciliul nu apare pe CEI; titular persoană juridică.",
+      "identity": "cei_vasilescu.png",
+      "registration": "talon_zoe_company.png",
+      "expected": {
+        "person.last_name": "VASILESCU",
+        "person.first_name": "ANDREI",
+        "person.national_id": "1920720460015",
+        "person.address": null,
+        "vehicle.registration_number": "B123DMO",
+        "vehicle.vin": "VF1TEST0000000003",
+        "vehicle.make": "RENAULT",
+        "vehicle.model": "ZOE",
+        "vehicle.engine_cc": null,
+        "vehicle.fuel": "ELECTRIC",
+        "vehicle.certificate_holder.name": "SC EXEMPLU FLOTA SRL"
+      }
+    }
+  ],
+  "extra_files": {
+    "unreadable": "blank_unreadable.png"
+  }
+}

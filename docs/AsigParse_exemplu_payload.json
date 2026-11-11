@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0.0",
+  "processing_id": "demo-0001",
+  "status": "needs_review",
+  "purpose": "insurance_quote_prefill",
+  "person": {
+    "first_name": "ALEX",
+    "last_name": "IONESCU",
+    "national_id": null,
+    "identity_document": {
+      "type": "CI_1997",
+      "series": "XY",
+      "number": "000000"
+    },
+    "address": null
+  },
+  "vehicle": {
+    "registration_number": "B99XYZ",
+    "vin": "UU1AAAAAAAAAAAAAA",
+    "make": "DACIA",
+    "model": "LOGAN",
+    "engine_cc": 999,
+    "power_kw": 67,
+    "fuel": "PETROL",
+    "first_registration": "2020-03-10",
+    "certificate_holder": {
+      "name": "IONESCU ALEX"
+    },
+    "legal_owner": null
+  },
+  "field_meta": {
+    "vehicle.vin": {
+      "source": "registration.E",
+      "confidence": 0.96,
+      "review_required": false
+    },
+    "person.address": {
+      "source": null,
+      "confidence": null,
+      "review_required": true
+    }
+  },
+  "validation": {
+    "passed": false,
+    "issues": [
+      {
+        "field": "person.address",
+        "code": "MISSING_VALUE"
+      }
+    ]
+  },
+  "confirmed_by_operator": false
+}
