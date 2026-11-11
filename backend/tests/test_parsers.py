@@ -200,3 +200,155 @@ def test_oneocr_segments_are_grouped_into_rows_even_when_tilted():
            seg("IONESCU", 490, 320, 3), seg("M", 1450, 320, 3)]
     rows = group_into_rows(raw, 3.0)
     assert [ln.text for ln in rows] == ["Nume/Nom/Last Sex/Sexe/Sex", "IONESCU M"]
+
+
+# --- real-world layouts (structure copied from real documents, ALL VALUES FICTITIOUS) ---
+
+def _td1(docnum="ZZ1234567", cnp="1800101400016", dob="800101", sex="M", exp="350101"):
+    from app.parsing.mrz import check_digit
+
+    l1 = "IDROU" + docnum + str(check_digit(docnum)) + cnp + "<<"
+    l2 = dob + str(check_digit(dob)) + sex + exp + str(check_digit(exp)) + "ROU" + "<" * 11
+    l2 += str(check_digit(l1[5:30] + l2[0:7] + l2[8:15] + l2[18:29]))
+    return l1, l2
+
+
+CEI_ROWS = [
+    "RO ROMÂNIA CARTE DE IDENTITATE",
+    "ROMANIA IDENTITY CARD",
+    [(490, "Nume /Surname")],
+    [(490, "IONESCU")],
+    [(490, "Prenume / Given names")],
+    [(490, "ALEX-ION")],
+    [(490, "Sex / Sex"), (700, "Cetatenie / Nationality"), (1100, "Data nasterii / Date of birth")],
+    [(490, "M"), (700, "ROU"), (1100, "01 01 1980")],
+    [(490, "CNP / PIN")],
+    [(490, "1800101400016")],
+    [(490, "Nr. document / Document no."), (1100, "Data expirării / Date of expiry")],
+    [(490, "ZZ1234567"), (1100, "01 01 2035")],
+]
+
+
+def test_cei_front_and_back_layout():
+    l1, l2 = _td1()
+    ide = parse_identity(make_doc(CEI_ROWS + [l1, l2, "IONESCU<<ALEX<ION<<<<<<<<<<<<<<"]))
+    assert ide.document_type == "CEI"
+    assert (ide.last_name.value, ide.first_name.value) == ("IONESCU", "ALEX-ION")
+    assert (ide.series.value, ide.number.value) == ("ZZ", "1234567")
+    assert ide.expiry_date.value == "01.01.2035"
+    assert ide.national_id.value == "1800101400016" and "mrz_match" in ide.national_id.checks
+    assert ide.mrz.format == "TD1" and ide.mrz.document_number_valid and ide.mrz.composite_valid
+    person, vehicle, meta, ctx = build_from_extraction(ide, None)
+    val = validate_payload(person, vehicle, meta, ctx, threshold=0.85, today=TODAY)
+    assert person.identity_document.expiry_date == "2035-01-01"
+    assert ("person.address", "ADDRESS_NOT_ON_DOCUMENT") in codes(val)
+    assert not any(i.field.startswith("person.identity_document") for i in val.issues if i.severity != "info")
+
+
+def test_cei_front_only_without_mrz():
+    ide = parse_identity(make_doc(CEI_ROWS))
+    assert ide.document_type == "CEI"
+    assert (ide.series.value, ide.number.value) == ("ZZ", "1234567")
+
+
+def test_cei_cnp_falls_back_to_mrz_when_visual_zone_unreadable():
+    l1, l2 = _td1()
+    rows = [r for r in CEI_ROWS if r != [(490, "1800101400016")]]
+    ide = parse_identity(make_doc(rows + [l1, l2]))
+    assert ide.national_id.value == "1800101400016" and ide.national_id.source == "identity.MRZ"
+
+
+def test_cedilla_diacritics_normalised_to_comma_below():
+    rows = list(CI_ROWS)
+    rows[4] = [(490, "ŞTEFĂNESCU"), (1450, "M")]
+    ide = parse_identity(make_doc(rows))
+    assert ide.last_name.value == "ȘTEFĂNESCU"
+
+
+TALON_NEW_ROWS = [  # 2024+ certificate: owner block C.2 + "C2=C1" box, codes mid-line
+    "A ZZ-99-TST B 01.02.2010 H ANEXA",
+    "J AUTOTURISM M1 01.02.2024 1.1 01.02.2024 NR X00000000V",
+    "0.1 DACIA F.1 1500 G 1100 Numarul de inmatriculare ZZ-99-TST",
+    "D.2 ABC DEF P.1 1461 P.2 66 INSPECȚII TEHNICE PERIODICE",
+    "D.3 LOGAN P.3 MOTORINA Q x",
+    "E UU1TEST9X00000009 R GRI",
+    "K e2*2007/46*0000*00 S.1 5 S.2",
+    [(60, "C.2 C.2.1 POPESCU"), (700, "V.7 NEDC:120")],
+    [(60, "C.2.2 ANA MARIA"), (700, "Observații XX000")],
+    [(60, "C.2.3 Str. EXEMPLU Nr. 1 mun")],
+    [(80, "TESTENI Jud. TEST"), (700, "FILTRU DE PARTICULE")],
+    [(300, "C2=C1")],
+    "C.3C.3.1",
+    "C3=C1",
+    # back side / page 2 legend must not leak into the fields
+    "(A) Numărul de înmatriculare (B) Data primei înmatriculări a vehiculului",
+    "(C.1) Posesorul certificatului de înmatriculare: (C.1.1) Numele de familie sau",
+    "(D.1) Marca (D.2) Tipul (D.3) Descrierea comercială",
+    "E) Numărul de identificare al vehiculului (R) Culoarea vehiculului (S.1) Număr Certificat",
+]
+
+
+def test_new_format_talon_with_legend_and_c2_eq_c1():
+    reg = parse_registration(make_doc(TALON_NEW_ROWS))
+    assert reg.registration_number.value == "ZZ99TST"
+    assert reg.first_registration.value == "01.02.2010"
+    assert reg.category.value == "M1"
+    assert (reg.make.value, reg.vehicle_type.value, reg.model.value) == ("DACIA", "ABC DEF", "LOGAN")
+    assert reg.vin.value == "UU1TEST9X00000009" and reg.color.value == "GRI"
+    assert (reg.engine_cc.value, reg.power_kw.value, reg.fuel.value, reg.seats.value) == (1461, 66, "DIESEL", 5)
+    assert reg.owner_name.value == "POPESCU ANA MARIA"
+    assert reg.owner_address.value == "Str. EXEMPLU Nr. 1 mun TESTENI Jud. TEST"
+    assert reg.holder_name.value is None  # never copied from the owner
+    assert reg.c2_eq_c1_box
+    person, vehicle, meta, ctx = build_from_extraction(None, reg)
+    val = validate_payload(person, vehicle, meta, ctx, threshold=0.85, today=TODAY)
+    issue = next(i for i in val.issues if i.code == "HOLDER_SEE_C2_EQ_C1")
+    assert issue.suggestion == "POPESCU ANA MARIA"
+    assert vehicle.certificate_holder is None
+
+
+def test_colour_not_taken_from_legend_words():
+    rows = [r for r in TALON_NEW_ROWS if r != "E UU1TEST9X00000009 R GRI"] + ["E UU1TEST9X00000009"]
+    reg = parse_registration(make_doc(rows))
+    assert reg.color.value is None  # "NUMĂR CERTIFICAT" in the legend is not a colour
+
+
+def test_partially_read_owner_and_bad_category_are_flagged():
+    rows = [r for r in TALON_NEW_ROWS if not (isinstance(r, list) and r[0][1].startswith("C.2 C.2.1"))]
+    rows = [r if r != "J AUTOTURISM M1 01.02.2024 1.1 01.02.2024 NR X00000000V" else "J AUTOTURISM MI" for r in rows]
+    reg = parse_registration(make_doc(rows))
+    assert reg.owner_partial and reg.owner_name.value == "ANA MARIA"
+    person, vehicle, meta, ctx = build_from_extraction(None, reg)
+    val = validate_payload(person, vehicle, meta, ctx, threshold=0.85, today=TODAY)
+    assert ("vehicle.legal_owner.name", "OWNER_NAME_INCOMPLETE") in codes(val)
+    assert ("vehicle.category", "CATEGORY_UNUSUAL") in codes(val) or vehicle.category is None
+
+
+def test_one_letter_name_is_flagged():
+    from app.validation import validators as v
+
+    assert v.validate_name("S", "Nume").code == "NAME_TOO_SHORT"
+    assert v.validate_name("IONESCU", "Nume").valid
+
+
+def test_identity_type_without_evidence_is_flagged():
+    ide = parse_identity(make_doc(["CARTE DE IDENTITATE", "IDENTITY CARD", "Nume", "IONESCU", "1800101400016"]))
+    assert not ide.type_evidence
+    person, vehicle, meta, ctx = build_from_extraction(ide, None)
+    val = validate_payload(person, vehicle, meta, ctx, threshold=0.85, today=TODAY)
+    assert ("person.identity_document.type", "DOCUMENT_TYPE_UNCERTAIN") in codes(val)
+    assert parse_identity(make_doc(CI_ROWS)).type_evidence
+
+
+def test_damaged_cei_mrz_is_not_evidence_for_the_1997_card():
+    l1, l2 = _td1()
+    rows = ["CARTE DE IDENTITATE", "Nume", "IONESCU", l1[:12] + "#####" + l1[17:], l2]  # line 1 damaged
+    ide = parse_identity(make_doc(rows))
+    assert ide.document_type == "CEI" or not ide.type_evidence
+
+
+def test_name_with_card_header_text_is_flagged():
+    from app.validation import validators as v
+
+    assert v.validate_name("ROMANIAS", "Nume").code == "NAME_LOOKS_LIKE_LABEL"
+    assert v.validate_name("ROMANESCU", "Nume").valid

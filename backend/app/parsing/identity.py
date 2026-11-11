@@ -48,18 +48,28 @@ class IdentityExtraction:
     address_label_present: bool
     mrz: MrzResult | None
     notes: list[str] = field(default_factory=list)
+    type_evidence: bool = True  # False = subtype chosen by default (no distinguishing feature read)
 
 
 def _missing(source: str | None = None, note: str | None = None) -> Extracted:
     return Extracted(value=None, confidence=None, source=source, note=note)
 
 
-def detect_identity_subtype(doc: OcrDocument) -> str:
+# Labels used only on the 2021+ cards (CEI); the 1997 model uses
+# "Last name / First name", "SERIA .. NR" and has a "Domiciliu" field.
+CEI_LABELS = re.compile(r"\bpin\b|document\s*no|given\s*name|surn?am|date\s*of\s*expiry|nr\.?\s*document")
+
+
+def detect_identity_subtype(doc: OcrDocument, mrz: MrzResult | None = None) -> str:
     t = fold(doc.text)
     if "electronic" in t or "eid" in t.split():
         return "CEI"
     if "simpl" in t and "carte de identitate" in t:
         return "CIS"
+    if mrz is not None and mrz.format == "TD1":
+        return "CEI"
+    if CEI_LABELS.search(t) and not LBL_ADDRESS.search(t) and not re.search(r"seria\s*[a-z]{2}\s*n[ro]", t):
+        return "CEI"
     return "CI_1997"
 
 
@@ -143,7 +153,21 @@ def _find_series_number(lines: list[OcrLine], mrz: MrzResult | None) -> tuple[Ex
                 Extracted(m.group(1), substring_confidence(ln, m.group(1)) or conf, "identity.SERIA"),
                 Extracted(m.group(2), substring_confidence(ln, m.group(2)) or conf, "identity.NR"),
             )
-    if mrz and mrz.document_number and re.fullmatch(r"[A-Z]{2}\d{6}", mrz.document_number):
+    # CEI: "Nr. document / Document no." followed (same row or below) by e.g. "AB1234567"
+    for i, ln in enumerate(lines):
+        if not re.search(r"document", fold(ln.text)):
+            continue
+        for cand in lines[i : i + 2]:
+            m = re.search(r"(?<![A-Z0-9])([A-Z]{2})\s?(\d{7})(?!\d)", cand.text.upper())
+            if m:
+                ok_mrz = bool(mrz and mrz.document_number_valid and mrz.document_number == m.group(1) + m.group(2))
+                checks = ["mrz_check_digit"] if ok_mrz else []
+                conf = substring_confidence(cand, m.group(0))
+                return (
+                    Extracted(m.group(1), conf, "identity.Nr_document", list(checks)),
+                    Extracted(m.group(2), conf, "identity.Nr_document", list(checks)),
+                )
+    if mrz and mrz.document_number and re.fullmatch(r"[A-Z]{2}\d{6,7}", mrz.document_number):
         checks = ["mrz_check_digit"] if mrz.document_number_valid else []
         note = None if mrz.document_number_valid else "Cifra de control MRZ pentru numărul documentului nu se potrivește."
         return (
@@ -179,7 +203,7 @@ def _find_address(lines: list[OcrLine]) -> tuple[Extracted, bool]:
 def _find_expiry(lines: list[OcrLine], mrz: MrzResult | None) -> Extracted:
     for i, ch in _label_chunks(lines, LBL_VALIDITY, None):
         for cand in (ch, *_below(lines, i, ch, 1), *lines[i + 1 : i + 2]):
-            dates = re.findall(r"(\d{2})[.\-/](\d{2})[.\-/](\d{4})(?!\d)", cand.text)
+            dates = re.findall(r"(\d{2})[.\-/ ](\d{2})[.\-/ ](\d{4})(?!\d)", cand.text)
             if dates:
                 d, m, y = dates[-1]
                 return Extracted(f"{d}.{m}.{y}", line_conf(cand), "identity.Valabilitate")
@@ -193,7 +217,7 @@ def _find_expiry(lines: list[OcrLine], mrz: MrzResult | None) -> Extracted:
 def parse_identity(doc: OcrDocument) -> IdentityExtraction:
     lines = doc.lines
     mrz = find_mrz(lines)
-    subtype = detect_identity_subtype(doc)
+    subtype = detect_identity_subtype(doc, mrz)
     notes: list[str] = []
 
     last = _name_after_label(lines, LBL_LAST, LBL_FIRST, "identity.Nume")
@@ -222,7 +246,7 @@ def parse_identity(doc: OcrDocument) -> IdentityExtraction:
         document_type=subtype,
         first_name=first or _missing("identity.Prenume"),
         last_name=last or _missing("identity.Nume"),
-        national_id=_find_cnp(lines),
+        national_id=_cnp_with_mrz(_find_cnp(lines), mrz),
         series=series,
         number=number,
         expiry_date=_find_expiry(lines, mrz),
@@ -230,7 +254,39 @@ def parse_identity(doc: OcrDocument) -> IdentityExtraction:
         address_label_present=label_present,
         mrz=mrz,
         notes=notes,
+        type_evidence=_type_evidence(doc, mrz, subtype),
     )
+
+
+def _type_evidence(doc: OcrDocument, mrz: MrzResult | None, subtype: str) -> bool:
+    t = fold(doc.text)
+    if subtype == "CEI":
+        return True  # only ever chosen on positive evidence
+    if subtype == "CIS":
+        return True
+    return bool(
+        (mrz is not None and mrz.format == "TD2")
+        or LBL_ADDRESS.search(t)
+        or re.search(r"seria\s*[a-z]{2}\s*n[ro]", t)
+        or re.search(r"last\s*name|first\s*name|valabil", t)
+    )
+
+
+def _cnp_with_mrz(cnp: Extracted, mrz: MrzResult | None) -> Extracted:
+    """CEI MRZ (TD1) carries the full CNP: use it to confirm or, if the visual
+    zone was unreadable, as a fallback. Disagreement is left to validation."""
+    if not mrz or not mrz.cnp:
+        return cnp
+    if cnp.value == mrz.cnp:
+        if "mrz_match" not in cnp.checks:
+            cnp.checks.append("mrz_match")
+        return cnp
+    if cnp.value is None:
+        return Extracted(mrz.cnp, mrz.confidence, "identity.MRZ", ["cnp_checksum"] if
+                         cnp_check_digit(mrz.cnp[:12]) == int(mrz.cnp[12]) else [],
+                         note="Preluat din MRZ (zona vizuală nu a putut fi citită).")
+    cnp.note = "CNP-ul din zona vizuală diferă de cel din MRZ; verificați."
+    return cnp
 
 
 def identity_score(doc: OcrDocument) -> int:

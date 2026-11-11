@@ -244,7 +244,7 @@ def _party(p) -> Party | None:
     if p is None:
         return None
     name = v.normalize_name(p.name)
-    address = v.clean_spaces(p.address)
+    address = v.fix_ro_diacritics(v.clean_spaces(p.address))
     if not name and not address:
         return None
     return Party(name=name, address=address)
@@ -263,7 +263,7 @@ def normalize_input(req: ConfirmRequest) -> tuple[Person, Vehicle, list[Issue]]:
             number=v.clean_spaces(p.identity_document.number),
             expiry_date=v.normalize_date(p.identity_document.expiry_date),
         ),
-        address=v.clean_spaces(p.address),
+        address=v.fix_ro_diacritics(v.clean_spaces(p.address)),
     )
     vehicle = Vehicle(
         registration_number=v.normalize_plate(cv.registration_number),

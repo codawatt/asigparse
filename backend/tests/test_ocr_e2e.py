@@ -90,3 +90,21 @@ def test_unreadable_real_image_is_422(client, engine):
 def test_health_lists_engines(client):
     body = client.get("/api/v1/health").json()
     assert set(body["engines"]) == {"oneocr", "tesseract"}
+
+
+@pytest.mark.skipif(not _ready("oneocr"), reason="oneocr not available")
+@pytest.mark.parametrize("degrees", [90, 180, 270])
+def test_oneocr_reads_sideways_and_upside_down_documents(client, degrees):
+    from PIL import Image
+
+    sample = next(s for s in MANIFEST["sets"] if s["id"] == "standard")
+    img = Image.open(settings.samples_dir / sample["registration"]).convert("RGB").rotate(degrees, expand=True)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    r = client.post("/api/v1/extract?engine=oneocr",
+                    files={"registration_image": ("r.png", io.BytesIO(buf.getvalue()), "image/png")})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["documents"][0]["rotation_applied"][0] != 0  # the page was turned upright
+    for path in ("vehicle.vin", "vehicle.registration_number", "vehicle.make", "vehicle.engine_cc"):
+        assert get(body, path) == sample["expected"][path], path

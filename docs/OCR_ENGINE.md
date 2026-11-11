@@ -28,6 +28,41 @@ Every OneOCR miss on the hardest conditions was **flagged** (missing value, low 
 the operator is told to check it. Tesseract produced one confident wrong value (`ANDRE` instead of `ANDREI` on a
 blurred card).
 
+### Real documents (added 2026-11-12)
+
+8 real files were tested: CEI scans (front and back), a CEI screenshot, the 1997 CI as a scanned PDF and a cropped
+scan, and the 2024+ registration certificate as a 2-page scanned PDF, a screenshot and a phone photo. Each was run
+as received and under 8 simulated capture conditions, giving 72 runs per engine. Full anonymised numbers are in
+[OCR_BENCHMARK_REAL.md](OCR_BENCHMARK_REAL.md).
+
+| | OneOCR | Tesseract |
+|---|---|---|
+| Fields correct, original files | **94.3%** | 44.3% (2 of 8 files rejected) |
+| Fields correct, all conditions | **77.0%** | 22.0% |
+| Critical fields correct, all conditions | **81.9%** | 22.6% |
+| Documents rejected as unreadable | **6 / 72** | 37 / 72 |
+| Silent wrong values | 8 | 4 |
+| Mean time per document | **≈ 0.6 s** | ≈ 7.4 s |
+
+How to read this:
+- **The gap is much larger on real documents than on synthetic ones.** Real cards have guilloche backgrounds,
+  coloured fonts and small text inside an A4 scan. Tesseract fails to recognise the document at all in half the
+  runs, while OneOCR reads every original file.
+- **Silent errors:** 7 of OneOCR's 8 are the same l/I confusion in one address abbreviation across conditions, and
+  the 8th is a free-text type code. Tesseract has fewer only because it rejects most documents outright.
+- **The weak conditions for OneOCR** are blur, heavy JPEG and the phone-photo simulation (about 50%). These were
+  applied to the whole page: on A4 scans the card is only about 40% of the width, and the screenshots are already
+  550–900 px wide, so the text becomes very small. Rejecting these cases is the intended outcome.
+- **The parsers were adapted to these real layouts**, without hard-coding any value:
+  - the CEI and its TD1 MRZ;
+  - the 2024+ certificate, where the page-2 legend no longer leaks into fields and single-letter codes are read
+    by the shape of their value;
+  - OneOCR now turns sideways and upside-down pages upright.
+
+  With the same OneOCR output, accuracy on the original files went from 73.9% to 94.3%, and OneOCR's silent
+  errors over all conditions from 23 to 8. Because the tuning set and the test set are the same 8 files, these
+  numbers are optimistic. A larger, held-out set of consented documents is needed before quoting them.
+
 **What these numbers do and don't show.** All images are synthetic renders of fictitious data (the project must
 not use real documents). They contain no guilloche patterns, holograms or wear, so absolute accuracy on real
 documents will be lower and is **not measured**. The meaningful result is the *relative* one: on identical inputs,

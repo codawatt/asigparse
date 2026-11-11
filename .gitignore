@@ -20,3 +20,7 @@ uploads/
 
 # Microsoft OneOCR binaries (copied locally from Snipping Tool; not redistributable)
 backend/vendor/
+
+# REAL personal documents and anything derived from them: never commit
+docs/acte/
+backend/benchmarks/real/

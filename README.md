@@ -112,20 +112,22 @@ cd backend
 ```
 (on macOS/Linux use `.venv/bin/python -m pytest`)
 
-The suite currently has 100 tests:
+The suite currently has 114 tests:
 
 - `tests/test_validators.py`: CNP checksum, date and county rules; VIN length and forbidden characters (every
   wrong length is flagged); registration-number formats; dates; fuel mapping; names; MRZ check digits.
 - `tests/test_parsers.py`: identity and registration parsers on synthetic OCR output. Covers two-column layouts,
   stacked "code above value" layouts, codes glued to their values, MRZ fallback, the CEI without an address,
-  holder ≠ owner, low-confidence flags and illegible codes.
+  holder ≠ owner, low-confidence flags and illegible codes. Also real-world layouts rebuilt with **fictitious**
+  values: the CEI front/back with its 3-line MRZ, and the 2024+ talon with owner block, "C2=C1" box and back-page
+  legend.
 - `tests/test_api.py`: extraction errors (400 bad type / corrupt / empty, 413 too large, 422 unreadable /
   unidentified / duplicate type, 500 OCR missing). Also the confirm flow (corrections, blocking errors,
   `acknowledge_issues`, CNP exclusion, 404 on an expired session), the dry-run validate endpoint and the
   sample whitelist. These tests use a fake OCR engine, so they run without Tesseract.
 - `tests/test_ocr_e2e.py`: **real OCR** with each installed engine (OneOCR and Tesseract) over every synthetic
-  sample set, compared field by field with the ground truth in `samples/manifest.json`. An engine that isn't
-  installed is skipped.
+  sample set, compared field by field with the ground truth in `samples/manifest.json`, plus sideways and
+  upside-down pages for OneOCR. An engine that isn't installed is skipped.
 
 Frontend type check and production build:
 ```bash
@@ -142,6 +144,20 @@ cd backend
 This runs each installed engine through the full pipeline on 11 conditions (original, phone photo, perspective,
 low resolution, blur, dark, heavy JPEG, glare and harder variants) and writes accuracy, silent-error and timing
 tables. It takes about 3 minutes, mostly in Tesseract.
+
+### Benchmark on real documents (local only)
+
+Real IDs and certificates contain personal data, so they **must never be committed**. `docs/acte/` and
+`backend/benchmarks/real/` are gitignored. Put the files in `docs/acte/` and describe them in
+`docs/acte/ground_truth.json` (format in the docstring of `backend/scripts/benchmark_real.py`), then run:
+```bash
+cd backend
+.venv\Scripts\python scripts/benchmark_real.py --out ../docs/OCR_BENCHMARK_REAL.md
+```
+Each document runs as received and under 8 simulated capture conditions (phone photo, perspective, glare, dark,
+blur, heavy JPEG, half resolution, rotated 90°). The markdown report is **anonymised**: categories, field names and
+percentages only. Every value-level miss is written only to the gitignored `backend/benchmarks/real/details.log`.
+It takes about 15 minutes, mostly in Tesseract.
 
 ### Regenerating the synthetic samples (optional)
 
@@ -212,20 +228,27 @@ cd backend
 
 ## 5. Known limitations (honest list)
 
-- **Accuracy has only been measured on synthetic samples** (see [docs/OCR_BENCHMARK.md](docs/OCR_BENCHMARK.md)).
-  Real documents have security backgrounds, holograms, glare and varying layouts, and accuracy on them is
-  **unknown**. The ≥ 90% target in the design doc has not been verified on real data.
+- **Real-document accuracy rests on a very small set**: 8 files (3 distinct CEI, 1 CI 1997, 2 certificates; scans,
+  screenshots and one phone photo), see [docs/OCR_BENCHMARK_REAL.md](docs/OCR_BENCHMARK_REAL.md). With OneOCR, the
+  original files reach 94.3% of fields correct and 77.0% averaged over all simulated capture conditions. That's an
+  indication, not a statistically solid figure, and the ≥ 90% target in the design doc is only met on clean
+  originals.
 - **OneOCR is unofficial and Windows-only.** It depends on Snipping Tool's DLLs through a reverse-engineered
   interface, may break when Snipping Tool updates, and its licence terms for this use have **not** been reviewed.
   Tesseract remains the supported fallback.
-- **The synthetic layouts approximate the text layout only.** Real talon versions (older formats, the back side,
-  very small code labels) may need extra layout rules. Single-letter codes (A, B, E, J, R) are the most fragile:
-  when the code is missed, a pattern fallback is used for A and E and marked "verificați".
-- **CEI / CIS** (new electronic and simple identity cards) are detected only by a text heuristic and parsed with
-  generic labels. Their TD1 MRZ is not parsed. The address is never extracted from a CEI, because it is not printed
-  on it.
-- **No explicit deskew or perspective correction.** OneOCR tolerates the tested 3.5° tilt and keystone; Tesseract
-  degrades on them. The quality check warns the operator to take the photo again.
+- **Talon versions**: the parser handles the 2024+ certificate tested (owner block C.2, "C2=C1" box, back-page legend)
+  and the older single-column layouts used in the samples. Other print versions may need rules. Single-letter codes
+  (A, B, E, J, R) are read from the shape of their value (plate, date, VIN, category, known colour).
+- **The "C2=C1" check box can't be read reliably** (ticked vs empty). The holder is therefore never filled
+  automatically from the owner. The operator gets a warning with a one-click suggestion.
+- **CEI** (electronic card) is supported: front labels, 2-letter + 7-digit document number, and the 3-line TD1
+  MRZ with check digits and full CNP cross-check. The address is never extracted from a CEI, because it is not
+  printed on it. **CIS** (simple card) is only detected, not specifically parsed.
+- **Residual OCR confusions**, such as `l`/`I` in an address abbreviation ("Bl." read as "BI."), pass validation and
+  are the main remaining source of unflagged errors on real data. The operator review stays mandatory.
+- **No explicit deskew or perspective correction.** OneOCR tolerates the tested 3.5° tilt and keystone, and sideways
+  or upside-down pages are turned upright automatically. Tesseract degrades on all of these. The quality check
+  warns the operator to take the photo again.
 - **The confidence score is technical OCR uncertainty**, not document authenticity. There is no forgery detection,
   NFC/chip reading or check against official registries.
 - **The VIN check digit** (position 9, mandatory only in North America) is not checked.
@@ -290,7 +313,8 @@ backend/
     parsing/           identity (VIZ + MRZ), registration (EU codes), shared helpers
     validation/        CNP / VIN / plate / date / fuel validators
   scripts/generate_samples.py   synthetic test documents and ground truth
-  scripts/benchmark_ocr.py      engine benchmark -> docs/OCR_BENCHMARK.md
+  scripts/benchmark_ocr.py      engine benchmark on synthetic data -> docs/OCR_BENCHMARK.md
+  scripts/benchmark_real.py     engine benchmark on local real documents -> anonymised docs/OCR_BENCHMARK_REAL.md
   scripts/setup_oneocr.ps1      copy + verify OneOCR files from the local Snipping Tool
   vendor/oneocr/                (gitignored) Microsoft OneOCR binaries
   samples/                      generated synthetic files (+ manifest.json)

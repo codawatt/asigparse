@@ -23,6 +23,15 @@ def strip_diacritics(text: str) -> str:
     return "".join(ch for ch in normalized if not unicodedata.combining(ch))
 
 
+# OCR engines and older fonts emit the cedilla forms; Romanian orthography
+# uses comma-below (Ș, Ț). Normalising avoids false "corrections".
+_RO_COMMA = str.maketrans({"Ş": "Ș", "ş": "ș", "Ţ": "Ț", "ţ": "ț"})
+
+
+def fix_ro_diacritics(text: str | None) -> str | None:
+    return text.translate(_RO_COMMA) if text else text
+
+
 def clean_spaces(text: str | None) -> str | None:
     if text is None:
         return None
@@ -209,11 +218,14 @@ def validate_id_series(series: str | None) -> ValidationResult:
     return OK
 
 
-def validate_id_number(number: str | None) -> ValidationResult:
+def validate_id_number(number: str | None, doc_type: str | None = None) -> ValidationResult:
+    """CI model 1997: 6 digits. CEI: the document number is 2 letters + 7
+    digits (stored here as series + number), older CEI batches may use 6."""
     if not number:
         return ValidationResult(False, "MISSING_VALUE", "Numărul actului lipsă.")
-    if not re.fullmatch(r"\d{6}", number):
-        return ValidationResult(False, "ID_NUMBER_INVALID", "Numărul CI trebuie să fie format din 6 cifre.")
+    pattern, label = (r"\d{6,7}", "6–7 cifre") if doc_type == "CEI" else (r"\d{6}", "6 cifre")
+    if not re.fullmatch(pattern, number):
+        return ValidationResult(False, "ID_NUMBER_INVALID", f"Numărul actului trebuie să fie format din {label}.")
     return OK
 
 
@@ -353,7 +365,7 @@ def normalize_name(value: str | None) -> str | None:
     if not v:
         return None
     v = re.sub(r"\s*-\s*", "-", v)
-    return v.upper()
+    return fix_ro_diacritics(v.upper())
 
 
 def validate_name(value: str | None, label: str) -> ValidationResult:
@@ -361,8 +373,26 @@ def validate_name(value: str | None, label: str) -> ValidationResult:
         return ValidationResult(False, "MISSING_VALUE", f"{label} lipsă.")
     if re.search(r"\d", value):
         return ValidationResult(False, "NAME_CONTAINS_DIGITS", f"{label} conține cifre; probabil eroare OCR.")
+    if re.search(r"ROMANIA|ROUMANIE|IDENTIT|CARTE|CARD|PRENUME|NUME|SURNAME|GIVEN|NATIONAL",
+                 strip_diacritics(value).upper()):
+        return ValidationResult(False, "NAME_LOOKS_LIKE_LABEL",
+                                f"{label} conține text tipărit al actului (etichetă/antet); probabil citit greșit.")
+    if len(re.sub(r"[^A-Za-zĂÂÎȘŞȚŢăâîșşțţ]", "", value)) < 2:
+        return ValidationResult(False, "NAME_TOO_SHORT", f"{label} are sub 2 litere; probabil citit parțial.")
     if not re.fullmatch(r"[A-ZĂÂÎȘŞȚŢÁÉÍÓÖÜŐŰÇ' \-.]+", value):
         return ValidationResult(False, "NAME_UNUSUAL_CHARS", f"{label} conține caractere neobișnuite.")
+    return OK
+
+
+VEHICLE_CATEGORY = re.compile(r"^(?:[MNO][1-4]G?|L[1-7]E?|T[1-5]|R[1-4]|S[12])$")
+
+
+def validate_category(value: str | None) -> ValidationResult:
+    if not value:
+        return OK
+    if not VEHICLE_CATEGORY.match(value):
+        return ValidationResult(False, "CATEGORY_UNUSUAL",
+                                f"Categoria „{value}” nu este un cod de categorie UE (ex. M1, N1, L3e); verificați.")
     return OK
 
 

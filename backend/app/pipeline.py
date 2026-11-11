@@ -64,6 +64,10 @@ class Context:
     address_label_present: bool = True
     owner_present: bool = False
     holder_partial: bool = False
+    owner_partial: bool = False
+    identity_type_evidence: bool = True
+    c2_eq_c1_box: bool = False
+    owner_name_hint: str | None = None
     mrz_birth_date: date | None = None
     mrz_sex: str | None = None
     mrz_last_name: str | None = None
@@ -121,7 +125,7 @@ def build_from_extraction(
             identity_document=IdentityDocument(
                 type=ide.document_type, series=ide.series.value, number=ide.number.value, expiry_date=expiry
             ),
-            address=ide.address.value,
+            address=v.fix_ro_diacritics(ide.address.value),
         )
         meta["person.first_name"] = _meta(ide.first_name)
         meta["person.last_name"] = _meta(ide.last_name)
@@ -133,6 +137,7 @@ def build_from_extraction(
         if not ide.address_label_present:
             meta["person.address"].source = None
         ctx.identity_type = ide.document_type
+        ctx.identity_type_evidence = ide.type_evidence
         ctx.address_label_present = ide.address_label_present
         if ide.mrz:
             if ide.mrz.birth_date_valid:
@@ -149,12 +154,12 @@ def build_from_extraction(
     if reg is not None:
         first_reg = v.normalize_date(reg.first_registration.value) if reg.first_registration.value else None
         holder = (
-            Party(name=reg.holder_name.value, address=reg.holder_address.value)
+            Party(name=reg.holder_name.value, address=v.fix_ro_diacritics(reg.holder_address.value))
             if (reg.holder_name.value or reg.holder_address.value)
             else None
         )
         owner = (
-            Party(name=reg.owner_name.value, address=reg.owner_address.value)
+            Party(name=reg.owner_name.value, address=v.fix_ro_diacritics(reg.owner_address.value))
             if (reg.owner_present or reg.owner_address.value)
             else None
         )
@@ -198,6 +203,9 @@ def build_from_extraction(
             meta[path] = _meta(ex)
         ctx.owner_present = reg.owner_present
         ctx.holder_partial = reg.holder_partial
+        ctx.c2_eq_c1_box = reg.c2_eq_c1_box
+        ctx.owner_partial = reg.owner_partial
+        ctx.owner_name_hint = reg.owner_name.value
         ctx.fuel_raw = reg.fuel_raw
     else:
         vehicle = Vehicle()
@@ -271,6 +279,15 @@ def validate_payload(
             continue
         if path in SOFT_OPTIONAL:
             continue
+        if path == "vehicle.certificate_holder.name" and ctx.c2_eq_c1_box and not ctx.confirmed:
+            m.reason = "Certificatul folosește căsuța „C2=C1” în loc de un bloc C.1 separat."
+            add(path, "HOLDER_SEE_C2_EQ_C1", "warning",
+                "Titularul nu este tipărit separat; certificatul are căsuța „C2=C1” (titular = proprietar). "
+                "OCR nu poate citi fiabil dacă e bifată: verificați și aplicați sugestia doar dacă este bifată.",
+                suggestion=ctx.owner_name_hint)
+            continue
+        if path == "vehicle.certificate_holder.address" and ctx.c2_eq_c1_box:
+            continue
         severity = "error" if critical else "warning"
         add(path, "MISSING_VALUE", severity, f"{label}: valoare lipsă.")
 
@@ -300,14 +317,17 @@ def validate_payload(
     if doc.series:
         add("person.identity_document.series", v.validate_id_series(doc.series), "warning")
     if doc.number:
-        add("person.identity_document.number", v.validate_id_number(doc.number), "warning")
+        add("person.identity_document.number", v.validate_id_number(doc.number, doc.type), "warning")
     if doc.expiry_date:
         res = v.validate_iso_date(doc.expiry_date)
         add("person.identity_document.expiry_date", res)
         if res.valid and v.parse_date(doc.expiry_date) < today:
             add("person.identity_document.expiry_date", "DOCUMENT_EXPIRED", "warning",
                 "Actul de identitate pare expirat.")
-    if doc.type in ("CEI", "CIS"):
+    if ctx.identity_provided and not ctx.identity_type_evidence and not ctx.confirmed:
+        add("person.identity_document.type", "DOCUMENT_TYPE_UNCERTAIN", "warning",
+            "Tipul actului (CI 1997 / CEI) nu a putut fi stabilit din elementele citite; verificați.")
+    if doc.type == "CIS":
         add("person.identity_document.type", "DOCUMENT_TYPE_LIMITED", "warning",
             f"Tip de act {doc.type}: suport limitat în MVP (layout-ul este optimizat pentru CI model 1997).")
 
@@ -327,6 +347,8 @@ def validate_payload(
             v.validate_range(vehicle.max_permissible_mass_kg, 100, 60000, "Masa maximă", "kg"), "warning")
     if vehicle.seats is not None:
         add("vehicle.seats", v.validate_range(vehicle.seats, 1, 100, "Numărul de locuri", ""), "warning")
+    if vehicle.category:
+        add("vehicle.category", v.validate_category(vehicle.category), "warning")
     if vehicle.fuel and vehicle.fuel not in v.FUEL_VALUES:
         add("vehicle.fuel", "FUEL_UNRECOGNIZED", "warning", f"Combustibil necunoscut: {vehicle.fuel}.")
     elif vehicle.fuel == "OTHER":
@@ -344,7 +366,10 @@ def validate_payload(
     if ctx.holder_partial and not ctx.confirmed:
         add("vehicle.certificate_holder.name", "HOLDER_NAME_INCOMPLETE", "warning",
             "Numele titularului pare citit parțial (lipsește C.1.1 sau C.1.2). Verificați pe certificat.")
-    elif holder_tokens and person_tokens and holder_tokens < person_tokens:
+    if ctx.owner_partial and not ctx.confirmed:
+        add("vehicle.legal_owner.name", "OWNER_NAME_INCOMPLETE", "warning",
+            "Numele proprietarului pare citit parțial (lipsește C.2.1 sau C.2.2). Verificați pe certificat.")
+    if holder_tokens and person_tokens and holder_tokens < person_tokens and not ctx.holder_partial:
         add("vehicle.certificate_holder.name", "HOLDER_NAME_INCOMPLETE", "warning",
             "Titularul conține doar o parte din numele persoanei din CI; posibil citit parțial. Verificați.")
     if holder_name and person_name and not v.names_equivalent(holder_name, person_name):

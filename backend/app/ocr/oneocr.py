@@ -163,8 +163,21 @@ class OneOcrEngine:
 
     # -- recognition ----------------------------------------------------
     def recognize(self, image: Image.Image, page: int = 0) -> tuple[list[OcrLine], int]:
+        """Recognise text. If OneOCR reports the page as turned (sideways or
+        upside down, |angle| > 30 deg), the image is rotated upright and
+        recognised again, so the layout parsers see a normal reading order.
+        Returns (lines, clockwise rotation applied in degrees)."""
         if not self.is_available():
             raise OcrUnavailableError(self._error or "OneOCR indisponibil.")
+        raw_lines, angle = self._run(image)
+        signed = ((angle + 180.0) % 360.0) - 180.0  # (-180, 180]
+        if abs(signed) > 30.0:
+            upright = image.convert("RGB").rotate(angle, expand=True, fillcolor=(255, 255, 255))
+            raw_lines, angle2 = self._run(upright)
+            return group_into_rows(raw_lines, angle2, page), int(round((-angle) % 360))
+        return group_into_rows(raw_lines, angle, page), 0
+
+    def _run(self, image: Image.Image):
         w, h = image.size
         if min(w, h) < self.MIN_SIDE or max(w, h) > self.MAX_SIDE:
             scale = min(self.MAX_SIDE / max(w, h), 1.0) if max(w, h) > self.MAX_SIDE else self.MIN_SIDE / min(w, h)
@@ -186,7 +199,7 @@ class OneOcrEngine:
                 raw_lines = self._read_lines(dll, result)
             finally:
                 dll.ReleaseOcrResult(result)
-        return group_into_rows(raw_lines, text_angle, page), 0
+        return raw_lines, text_angle
 
     @staticmethod
     def _read_lines(dll, result) -> list[list[tuple[str, float, tuple[float, ...]]]]:

@@ -76,6 +76,8 @@ class MrzResult:
     optional_data: str | None = None
     composite_valid: bool = False
     problems: list[str] = field(default_factory=list)
+    format: str = "TD2"  # TD2 = CI model 1997 (2x36); TD1 = CEI (3x30)
+    cnp: str | None = None  # TD1 optional data of Romanian CEI carries the full CNP
 
 
 def _yymmdd(s: str, *, future: bool) -> date | None:
@@ -93,13 +95,74 @@ def _yymmdd(s: str, *, future: bool) -> date | None:
         return None
 
 
-def find_mrz(lines: list[OcrLine]) -> MrzResult | None:
-    candidates: list[tuple[str, OcrLine]] = []
+def _candidates(lines: list[OcrLine]) -> list[tuple[str, OcrLine]]:
+    out = []
     for ln in lines:
         c = _clean(ln.text)
         digits = sum(ch.isdigit() for ch in c)
-        if len(c) >= 28 and (c.count("<") >= 2 or ("<" in c and digits >= 12)):
-            candidates.append((c, ln))
+        if len(c) >= 26 and (c.count("<") >= 2 or ("<" in c and digits >= 12)):
+            out.append((c, ln))
+    return out
+
+
+_TD1_L1 = re.compile(r"^[I1][D0]R[O0]U[A-Z0-9]{2}\d{7}")
+
+
+def find_mrz_td1(lines: list[OcrLine]) -> MrzResult | None:
+    """Romanian electronic ID card (CEI): ICAO TD1, 3 lines x 30 chars.
+    L1 = ID ROU docnum(9) cd optional(15: CNP + fillers)
+    L2 = DOB(6) cd sex expiry(6) cd nationality(3) optional(11) composite
+    L3 = SURNAME<<GIVEN<NAMES"""
+    cands = _candidates(lines)
+    l1 = next(((c, ln) for c, ln in cands if _TD1_L1.match(c)), None)
+    l2 = next(((c, ln) for c, ln in cands if (l1 is None or ln is not l1[1]) and re.match(r"^\d{7}[MF<]\d{7}", c)), None)
+    if l1 is None and l2 is None:
+        return None
+    if l1 is None:  # line 1 unreadable: keep what line 2/3 prove (format, dates)
+        l1 = ("", None)
+    l3 = next(((c, ln) for c, ln in cands if ln is not l1[1] and (l2 is None or ln is not l2[1])
+               and "<<" in c and not re.search(r"\d", c)), None)
+    line1 = l1[0].ljust(30, "<")[:30]
+    line2 = (l2[0] if l2 else "").ljust(30, "<")[:30]
+    confs = [x[1].confidence for x in (l1, l2, l3) if x and x[1] is not None and x[1].confidence is not None]
+    res = MrzResult(line1=line1, line2=line2, confidence=round(sum(confs) / len(confs), 3) if confs else None,
+                    format="TD1")
+    docnum, res.document_number_valid = _checked(line1[5:14], line1[14], "docnum")
+    res.document_number = docnum.replace("<", "") or None
+    opt = line1[15:30].replace("<", "")
+    if re.fullmatch(r"\d{13}", opt):
+        res.cnp = opt
+    res.optional_data = opt or None
+    if not res.document_number_valid:
+        res.problems.append("document number check digit")
+    if l2:
+        dob, dob_ok = _checked(line2[0:6], line2[6])
+        res.birth_date = _yymmdd(dob, future=False)
+        res.birth_date_valid = dob_ok and res.birth_date is not None
+        res.sex = line2[7] if line2[7] in "MF" else None
+        exp, exp_ok = _checked(line2[8:14], line2[14])
+        res.expiry_date = _yymmdd(exp, future=True)
+        res.expiry_date_valid = exp_ok and res.expiry_date is not None
+        res.nationality = line2[15:18].translate(_TO_ALPHA)
+        composite = line1[5:30] + line2[0:7] + line2[8:15] + line2[18:29]
+        cd = line2[29].translate(_TO_DIGIT)
+        res.composite_valid = cd.isdigit() and check_digit(composite) == int(cd)
+        if not res.birth_date_valid:
+            res.problems.append("birth date check digit")
+        if not res.expiry_date_valid:
+            res.problems.append("expiry date check digit")
+    if l3:
+        last, _, first = l3[0].partition("<<")
+        res.last_name = last.replace("<", " ").strip() or None
+        res.first_name = re.sub(r"<+", " ", first).strip() or None
+    return res
+
+
+def find_mrz(lines: list[OcrLine]) -> MrzResult | None:
+    td1 = find_mrz_td1(lines)
+    if td1 is not None:
+        return td1
+    candidates = _candidates(lines)
     l1 = next(((c, ln) for c, ln in candidates if c.startswith(("ID", "1D", "I0", "IO")) and "ROU" in c[:8]), None)
     l2 = next(
         ((c, ln) for c, ln in candidates if (l1 is None or ln is not l1[1]) and sum(ch.isdigit() for ch in c) >= 12),
@@ -111,6 +174,9 @@ def find_mrz(lines: list[OcrLine]) -> MrzResult | None:
     line2 = (l2[0] if l2 else "").ljust(36, "<")[:36]
     confs = [x[1].confidence for x in (l1, l2) if x and x[1].confidence is not None]
     res = MrzResult(line1=line1, line2=line2, confidence=round(sum(confs) / len(confs), 3) if confs else None)
+    # TD2 lines are 36 characters; shorter fragments may be a damaged TD1 (CEI)
+    if max(len(x[0]) for x in (l1, l2) if x) < 33:
+        res.format = "UNKNOWN"
 
     if l1:
         body = line1[5:]
